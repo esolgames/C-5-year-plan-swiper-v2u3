@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The 5-Year Plan Swiper</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+    
+    <!-- Tailwind & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.359.0/umd/lucide.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+        
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100dvh;
+            background-color: #0f172a; /* slate-900 */
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            overscroll-behavior: none; /* Prevents pull-to-refresh on mobile */
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-10px); }
+            40%, 80% { transform: translateX(10px); }
+        }
+        .animate-shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+
+        @keyframes slideInUp {
+            from { transform: translateY(100%) scale(0.8); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .animate-slide-in {
+            animation: slideInUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* Card physics classes */
+        .card-drag-active {
+            transition: none !important;
+            cursor: grabbing !important;
+        }
+        .card-snap-back {
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease !important;
+        }
+        .card-swipe-out {
+            transition: transform 0.4s cubic-bezier(0.55, 0.085, 0.68, 0.53), opacity 0.3s ease !important;
+            opacity: 0;
+        }
+
+        /* Prevent text selection during drag */
+        .no-select {
+            -webkit-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root" class="w-full h-full max-w-md mx-auto relative shadow-2xl bg-slate-900 flex flex-col overflow-hidden"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = window.React;
+
+        const GAME_DATA = [
+            {
+                id: 1,
+                time: "This year",
+                milestone: "go to the U.S.",
+                icon: "plane",
+                statement: "He'll probably go to the U.S.",
+                isCorrect: true, // Agreement!
+                feedback: ""
+            },
+            {
+                id: 2,
+                time: "Next year",
+                milestone: "study English",
+                icon: "book-open",
+                statement: "He won't study English next year.",
+                isCorrect: false, // Factually wrong
+                feedback: "Look at the plan. He WILL study English! (He won't = He will not)."
+            },
+            {
+                id: 3,
+                time: "In two years",
+                milestone: "get a GED",
+                icon: "graduation-cap",
+                statement: "He's probably get a GED.",
+                isCorrect: false, // Grammar mistake (He's vs He'll)
+                feedback: "Grammar check! Use He'll (He will) for future plans, not He's (He is)."
+            },
+            {
+                id: 4,
+                time: "In three years",
+                milestone: "take a vocational course",
+                icon: "wrench",
+                statement: "He'll take a vocational course.",
+                isCorrect: true,
+                feedback: ""
+            },
+            {
+                id: 5,
+                time: "In four years",
+                milestone: "open a business",
+                icon: "store",
+                statement: "He'll open a business in five years.",
+                isCorrect: false, // Wrong timeline
+                feedback: "Check the timeline! He'll open a business in FOUR years, not five."
+            },
+            {
+                id: 6,
+                time: "In five years",
+                milestone: "buy a house",
+                icon: "home",
+                statement: "Most likely, he'll buy a house.",
+                isCorrect: true,
+                feedback: ""
+            }
+        ];
+
+        let audioCtx = null;
+        
+        const playSound = (type) => {
+            try {
+                // Safely guard against browsers that don't support AudioContext
+                if (!window.AudioContext && !window.webkitAudioContext) return;
+                
+                // Lazy-load the context only when needed
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                const osc = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                osc.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                if (type === 'swipe') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'error') {
+                // Buzzer/Thud
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+                }
+            } catch (err) {
+                console.warn("Audio skipped:", err);
+            }
+        };
+
+        // Icon Helper Component
+        const Icon = ({ name, className, size = 24 }) => {
+            const spanRef = useRef(null);
+            useEffect(() => {
+                if (spanRef.current && window.lucide) {
+                    spanRef.current.innerHTML = '';
+                    const i = document.createElement('i');
+                    i.setAttribute('data-lucide', name);
+                    i.setAttribute('width', size);
+                    i.setAttribute('height', size);
+                    if (className) i.setAttribute('class', className);
+                    spanRef.current.appendChild(i);
+                    window.lucide.createIcons({ root: spanRef.current });
+                }
+            }, [name, className, size]);
+            return <span ref={spanRef} className={`inline-flex items-center justify-center ${className || ''}`}></span>;
+        };
+
+        function App() {
+            const [hasStarted, setHasStarted] = useState(false);
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [score, setScore] = useState(0);
+            const [isGameOver, setIsGameOver] = useState(false);
+            
+            // Drag Physics State
+            const [dragX, setDragX] = useState(0);
+            const [isDragging, setIsDragging] = useState(false);
+            const [cardState, setCardState] = useState('normal'); // 'normal', 'swipe-right', 'swipe-left'
+            
+            // Feedback State
+            const [feedbackParams, setFeedbackParams] = useState(null); // { isCorrect: bool, message: string }
+            const [shakeTarget, setShakeTarget] = useState(false);
+
+            const cardRef = useRef(null);
+            const startXRef = useRef(0);
+            const currentItem = GAME_DATA[currentIndex];
+
+            const SWIPE_THRESHOLD = 100; // pixels to trigger a swipe
+
+            const handleDragStart = (clientX) => {
+                if (feedbackParams || cardState !== 'normal') return;
+                setIsDragging(true);
+                startXRef.current = clientX;
+                setDragX(0);
+            };
+
+            const handleDragMove = (clientX) => {
+                if (!isDragging) return;
+                const deltaX = clientX - startXRef.current;
+                setDragX(deltaX);
+            };
+
+            const handleDragEnd = () => {
+                if (!isDragging) return;
+                setIsDragging(false);
+
+                if (dragX > SWIPE_THRESHOLD) {
+                    processSwipe('right', true);
+                } else if (dragX < -SWIPE_THRESHOLD) {
+                    processSwipe('left', false);
+                } else {
+                    // Snap back
+                    setDragX(0);
+                }
+            };
+
+            // Unified listeners
+            const onTouchStart = (e) => handleDragStart(e.touches[0].clientX);
+            const onTouchMove = (e) => handleDragMove(e.touches[0].clientX);
+            const onTouchEnd = () => handleDragEnd();
+            
+            const onMouseDown = (e) => handleDragStart(e.clientX);
+            const onMouseMove = (e) => handleDragMove(e.clientX);
+            const onMouseUp = () => handleDragEnd();
+            const onMouseLeave = () => { if (isDragging) handleDragEnd(); };
+
+            const processSwipe = (direction, userIndicatedTrue) => {
+                playSound('swipe');
+                setCardState(`swipe-${direction}`);
+                
+                const isActuallyTrue = currentItem.isCorrect;
+                const answeredCorrectly = userIndicatedTrue === isActuallyTrue;
+
+                setTimeout(() => {
+                    if (answeredCorrectly) {
+                        playSound('success');
+                        setScore(s => s + 10);
+                        moveToNextCard();
+                    } else {
+                        playSound('error');
+                        setShakeTarget(true);
+                        setFeedbackParams({
+                            isCorrect: false,
+                            message: currentItem.feedback || "Oops! That's incorrect. Pay close attention to the grammar and timeline."
+                        });
+                        setTimeout(() => setShakeTarget(false), 500);
+                    }
+                }, 300); // Wait for swipe out animation
+            };
+
+            const moveToNextCard = () => {
+                setCardState('normal');
+                setDragX(0);
+                setFeedbackParams(null);
+                
+                if (currentIndex < GAME_DATA.length - 1) {
+                    setCurrentIndex(c => c + 1);
+                } else {
+                    setIsGameOver(true);
+                }
+            };
+
+            // Compute dynamic styles based on drag
+            const rotation = dragX * 0.05; // slight rotation
+            const opacity = 1 - Math.abs(dragX) / 500; // fade slightly as it moves
+            
+            // Dynamic Shadow for visual feedback
+            let boxShadow = "0 25px 50px -12px rgba(0, 0, 0, 0.5)";
+            if (isDragging) {
+                if (dragX > 20) boxShadow = `0 0 30px rgba(34, 197, 94, ${Math.min(dragX / 100, 0.6)})`; // Green glow
+                else if (dragX < -20) boxShadow = `0 0 30px rgba(239, 68, 68, ${Math.min(Math.abs(dragX) / 100, 0.6)})`; // Red glow
+            }
+
+            let cardTransform = `translateX(${dragX}px) rotate(${rotation}deg)`;
+            if (cardState === 'swipe-right') cardTransform = `translateX(150vw) rotate(20deg)`;
+            if (cardState === 'swipe-left') cardTransform = `translateX(-150vw) rotate(-20deg)`;
+
+            if (!hasStarted) {
+                return (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-8 bg-slate-900 text-white text-center">
+                        <div className="w-24 h-24 bg-indigo-500 rounded-3xl flex items-center justify-center mb-6 shadow-[0_0_40px_rgba(99,102,241,0.5)] rotate-12">
+                            <Icon name="calendar-days" size={48} className="text-white -rotate-12" />
+                        </div>
+                        <h1 className="text-4xl font-black mb-4 uppercase tracking-tight">5-Year Plan Swiper</h1>
+                        <p className="text-slate-400 mb-8 font-medium text-lg leading-relaxed">
+                            Match Suk-jin's timeline with the correct grammar statements.
+                        </p>
+                        
+                        <div className="flex gap-4 mb-12 w-full max-w-xs">
+                            <div className="flex-1 bg-red-500/20 border-2 border-red-500/50 rounded-2xl p-4 flex flex-col items-center">
+                                <Icon name="arrow-left" className="text-red-400 mb-2" />
+                                <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Swipe<br/>False</span>
+                            </div>
+                            <div className="flex-1 bg-green-500/20 border-2 border-green-500/50 rounded-2xl p-4 flex flex-col items-center">
+                                <Icon name="arrow-right" className="text-green-400 mb-2" />
+                                <span className="text-xs font-bold text-green-400 uppercase tracking-wider">Swipe<br/>True</span>
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={() => {
+                                try {
+                                    if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
+                                        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                                    }
+                                    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+                                } catch(e) { console.warn("Audio init blocked:", e); }
+                                
+                                setHasStarted(true);
+                            }}
+                            className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black py-5 px-8 rounded-2xl transition-transform active:scale-95 text-xl shadow-[0_10px_0_#4338ca] active:shadow-[0_0px_0_#4338ca] active:translate-y-2"
+                        >
+                            START SWIPING
+                        </button>
+                    </div>
+                );
+            }
+
+            if (isGameOver) {
+                return (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-8 bg-slate-900 text-white text-center animate-slide-in">
+                        <Icon name="check-circle" size={80} className="text-green-400 mb-6" />
+                        <h2 className="text-4xl font-black mb-2">Plan Complete!</h2>
+                        <p className="text-slate-400 mb-8">You've mastered the future tense.</p>
+                        <div className="bg-slate-800 p-8 rounded-3xl mb-8 border border-slate-700 shadow-2xl w-full">
+                            <p className="text-sm text-slate-400 uppercase font-bold tracking-widest mb-2">Final Score</p>
+                            <p className="text-6xl font-black text-indigo-400">{score}</p>
+                        </div>
+                        <button 
+                            onClick={() => {
+                                setScore(0);
+                                setCurrentIndex(0);
+                                setIsGameOver(false);
+                            }}
+                            className="w-full bg-slate-700 hover:bg-slate-600 text-white font-black py-4 px-8 rounded-2xl transition-all active:scale-95 text-lg"
+                        >
+                            PLAY AGAIN
+                        </button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="w-full h-full flex flex-col relative font-sans text-white bg-slate-950">
+                    
+                    {/* Header HUD */}
+                    <div className="flex justify-between items-center p-6 bg-slate-900/80 backdrop-blur z-10 border-b border-slate-800 absolute top-0 w-full">
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center border border-indigo-500/50">
+                                <span className="font-black text-indigo-400 text-sm">{currentIndex + 1}</span>
+                            </div>
+                            <span className="font-bold text-slate-500 text-sm tracking-widest uppercase">/ {GAME_DATA.length}</span>
+                        </div>
+                        <div className="flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-full border border-slate-700 shadow-inner">
+                            <Icon name="star" size={16} className="text-yellow-400 fill-yellow-400" />
+                            <span className="font-black font-mono text-lg">{score}</span>
+                        </div>
+                    </div>
+
+                    {/* TOP HALF: Target Milestone (The "Plan") */}
+                    <div className="flex-1 flex flex-col items-center justify-center pt-24 pb-8 px-6 bg-slate-900">
+                        <h2 className="text-xs font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Suk-jin's Plan</h2>
+                        
+                        <div className={`w-full max-w-sm bg-slate-800 rounded-3xl p-8 border-t-4 border-indigo-500 shadow-2xl text-center relative ${shakeTarget ? 'animate-shake border-red-500' : ''}`}>
+                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-sm font-black px-4 py-1 rounded-full shadow-lg border-2 border-slate-900">
+                                {currentItem.time}
+                            </div>
+                            
+                            <div className="w-24 h-24 bg-slate-700 rounded-2xl mx-auto mt-2 mb-6 flex items-center justify-center shadow-inner border border-slate-600">
+                                <Icon name={currentItem.icon} size={48} className="text-indigo-300" />
+                            </div>
+                            
+                            <p className="text-2xl font-bold text-slate-100 capitalize leading-tight">
+                                {currentItem.milestone}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* BOTTOM HALF: The Swipable Statement Card */}
+                    <div className="h-[45%] relative flex items-center justify-center bg-slate-950 px-4 pb-8">
+                        
+                        {/* Background hint indicators (visible when dragged) */}
+                        <div className="absolute left-6 top-1/2 -translate-y-1/2 opacity-20 flex flex-col items-center transition-opacity" style={{ opacity: dragX < -20 ? 0.8 : 0.2 }}>
+                            <Icon name="x-circle" size={48} className="text-red-500 mb-2" />
+                            <span className="font-black text-red-500 tracking-widest uppercase">False</span>
+                        </div>
+                        <div className="absolute right-6 top-1/2 -translate-y-1/2 opacity-20 flex flex-col items-center transition-opacity" style={{ opacity: dragX > 20 ? 0.8 : 0.2 }}>
+                            <Icon name="check-circle" size={48} className="text-green-500 mb-2" />
+                            <span className="font-black text-green-500 tracking-widest uppercase">True</span>
+                        </div>
+
+                        {/* The Draggable Card */}
+                        {!feedbackParams && cardState !== 'swipe-right' && cardState !== 'swipe-left' && (
+                            <div 
+                                ref={cardRef}
+                                className={`w-full max-w-xs bg-white rounded-3xl p-8 border border-slate-200 shadow-2xl flex flex-col items-center justify-center relative no-select touch-none z-20 cursor-grab active:cursor-grabbing
+                                    ${isDragging ? 'card-drag-active' : 'card-snap-back'} animate-slide-in`}
+                                style={{ transform: cardTransform, opacity: opacity, boxShadow: boxShadow }}
+                                onTouchStart={onTouchStart}
+                                onTouchMove={onTouchMove}
+                                onTouchEnd={onTouchEnd}
+                                onMouseDown={onMouseDown}
+                                onMouseMove={onMouseMove}
+                                onMouseUp={onMouseUp}
+                                onMouseLeave={onMouseLeave}
+                            >
+                                <Icon name="quote" size={32} className="text-slate-200 absolute top-4 left-4" />
+                                <p className="text-2xl font-black text-slate-800 text-center leading-snug mt-4 z-10 pointer-events-none">
+                                    "{currentItem.statement}"
+                                </p>
+                                
+                                <div className="absolute bottom-4 flex gap-1 items-center justify-center w-full opacity-50">
+                                    <Icon name="arrow-left" size={16} className="text-slate-400" />
+                                    <Icon name="hand" size={20} className="text-slate-400" />
+                                    <Icon name="arrow-right" size={16} className="text-slate-400" />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Feedback Overlay Modal (Shows when wrong) */}
+                        {feedbackParams && (
+                            <div className="absolute inset-4 bg-slate-900 rounded-3xl border-2 border-red-500 p-6 flex flex-col items-center justify-center shadow-2xl z-50 animate-slide-in text-center">
+                                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4 border border-red-500/50">
+                                    <Icon name="alert-triangle" size={32} className="text-red-400" />
+                                </div>
+                                <h3 className="text-2xl font-black text-white mb-2">Not Quite</h3>
+                                <p className="text-slate-300 font-medium leading-relaxed mb-8">
+                                    {feedbackParams.message}
+                                </p>
+                                <button 
+                                    onClick={moveToNextCard}
+                                    className="w-full bg-slate-800 hover:bg-slate-700 text-white font-black py-4 px-8 rounded-2xl transition-all active:scale-95 shadow-lg border border-slate-600"
+                                >
+                                    GOT IT
+                                </button>
+                            </div>
+                        )}
+
+                    </div>
+                </div>
+            );
+        }
+
+        // Safety net: Catches any React errors and displays them instead of a blank screen
+        class ErrorBoundary extends window.React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error: error };
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="w-full h-full flex flex-col items-center justify-center p-8 bg-slate-900 text-red-400 font-mono text-sm text-center">
+                            <h2 className="text-xl font-bold mb-4 text-red-500">App Crashed</h2>
+                            <p className="bg-slate-800 p-4 rounded-lg break-words w-full">{this.state.error?.toString()}</p>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        const root = window.ReactDOM.createRoot(document.getElementById('root'));
+        root.render(
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        );
+    </script>
+</body>
+</html>
